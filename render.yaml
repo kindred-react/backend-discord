@@ -16,7 +16,8 @@ services:
         fromDatabase:
           name: discord-db
           property: connectionString
-    databases:
-      - name: discord-db
-        plan: free
-        region: singapore
+
+databases:
+  - name: discord-db
+    plan: free
+    region: singapore
