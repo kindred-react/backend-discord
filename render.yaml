@@ -1,8 +1,8 @@
 services:
-  - type: service
+  - type: web
     name: discord-backend
     region: singapore
-    env: go
+    runtime: go
     buildCommand: go build -o bin/server ./cmd/server
     startCommand: ./bin/server
     envVars:
