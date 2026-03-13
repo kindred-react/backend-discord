@@ -4,97 +4,11 @@ import (
 	"database/sql"
 	"encoding/json"
 
-	"golang.org/x/crypto/bcrypt"
 	"discord-backend/internal/database"
 	"discord-backend/internal/models"
 
 	"github.com/google/uuid"
 )
-
-type UserService struct{}
-
-func NewUserService() *UserService {
-	return &UserService{}
-}
-
-func (s *UserService) Create(username, email, password string) (*models.User, error) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return nil, err
-	}
-
-	discriminator := "0001"
-	var user models.User
-	
-	err = database.DB.QueryRow(`
-		INSERT INTO users (username, email, password_hash, discriminator)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, username, email, avatar, discriminator, created_at, updated_at
-	`, username, email, string(hash), discriminator).Scan(
-		&user.ID, &user.Username, &user.Email, &user.Avatar, 
-		&user.Discriminator, &user.CreatedAt, &user.UpdatedAt,
-	)
-
-	if err != nil {
-		return nil, err
-	}
-
-	return &user, nil
-}
-
-func (s *UserService) GetByID(id uuid.UUID) (*models.User, error) {
-	var user models.User
-	err := database.DB.QueryRow(`
-		SELECT id, username, email, avatar, discriminator, created_at, updated_at
-		FROM users WHERE id = $1
-	`, id).Scan(&user.ID, &user.Username, &user.Email, &user.Avatar, 
-		&user.Discriminator, &user.CreatedAt, &user.UpdatedAt)
-
-	if err != nil {
-		return nil, err
-	}
-	return &user, nil
-}
-
-func (s *UserService) GetByUsername(username string) (*models.User, error) {
-	var user models.User
-	err := database.DB.QueryRow(`
-		SELECT id, username, email, password_hash, avatar, discriminator, created_at, updated_at
-		FROM users WHERE username = $1
-	`, username).Scan(&user.ID, &user.Username, &user.Email, &user.PasswordHash,
-		&user.Avatar, &user.Discriminator, &user.CreatedAt, &user.UpdatedAt)
-
-	if err != nil {
-		return nil, err
-	}
-	return &user, nil
-}
-
-func (s *UserService) GetByEmail(email string) (*models.User, error) {
-	var user models.User
-	err := database.DB.QueryRow(`
-		SELECT id, username, email, password_hash, avatar, discriminator, created_at, updated_at
-		FROM users WHERE email = $1
-	`, email).Scan(&user.ID, &user.Username, &user.Email, &user.PasswordHash,
-		&user.Avatar, &user.Discriminator, &user.CreatedAt, &user.UpdatedAt)
-
-	if err != nil {
-		return nil, err
-	}
-	return &user, nil
-}
-
-func (s *UserService) ValidatePassword(user *models.User, password string) bool {
-	err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password))
-	return err == nil
-}
-
-func (s *UserService) UpdateAvatar(userID uuid.UUID, avatar string) error {
-	_, err := database.DB.Exec(`
-		UPDATE users SET avatar = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2
-	`, avatar, userID)
-	return err
-}
 
 type GuildService struct{}
 
@@ -151,7 +65,7 @@ func (s *GuildService) GetByID(id uuid.UUID) (*models.Guild, error) {
 	err := database.DB.QueryRow(`
 		SELECT id, name, icon, owner_id, created_at, updated_at
 		FROM guilds WHERE id = $1
-	`, id).Scan(&guild.ID, &guild.Name, &guild.Icon, &guild.OwnerID, 
+	`, id).Scan(&guild.ID, &guild.Name, &guild.Icon, &guild.OwnerID,
 		&guild.CreatedAt, &guild.UpdatedAt)
 
 	if err != nil {
@@ -185,7 +99,7 @@ func (s *GuildService) GetByUserID(userID uuid.UUID) ([]*models.Guild, error) {
 	var guilds []*models.Guild
 	for rows.Next() {
 		var guild models.Guild
-		err := rows.Scan(&guild.ID, &guild.Name, &guild.Icon, &guild.OwnerID, 
+		err := rows.Scan(&guild.ID, &guild.Name, &guild.Icon, &guild.OwnerID,
 			&guild.CreatedAt, &guild.UpdatedAt)
 		if err != nil {
 			return nil, err
@@ -213,7 +127,7 @@ func (s *GuildService) GetMembers(guildID uuid.UUID) ([]*models.GuildMember, err
 	for rows.Next() {
 		var member models.GuildMember
 		var user models.User
-		err := rows.Scan(&member.GuildID, &member.UserID, &member.Nickname, 
+		err := rows.Scan(&member.GuildID, &member.UserID, &member.Nickname,
 			&member.Role, &member.JoinedAt,
 			&user.ID, &user.Username, &user.Email, &user.Avatar, &user.Discriminator)
 		if err != nil {
@@ -260,8 +174,8 @@ func (s *ChannelService) Create(name string, channelType models.ChannelType, gui
 		VALUES ($1, $2, $3, $4)
 		RETURNING id, name, type, guild_id, parent_id, position, topic, created_at, updated_at
 	`, name, channelType, guildID, parentID).Scan(
-		&channel.ID, &channel.Name, &channel.Type, &channel.GuildID, 
-		&channel.ParentID, &channel.Position, &channel.Topic, 
+		&channel.ID, &channel.Name, &channel.Type, &channel.GuildID,
+		&channel.ParentID, &channel.Position, &channel.Topic,
 		&channel.CreatedAt, &channel.UpdatedAt)
 
 	if err != nil {
@@ -418,8 +332,8 @@ func (s *MessageService) GetByChannelID(channelID uuid.UUID, limit, offset int) 
 	var messages []*models.Message
 	for rows.Next() {
 		var message models.Message
-		err := rows.Scan(&message.ID, &message.ChannelID, &message.AuthorID, 
-			&message.Content, &message.Embeds, &message.ReplyToID, 
+		err := rows.Scan(&message.ID, &message.ChannelID, &message.AuthorID,
+			&message.Content, &message.Embeds, &message.ReplyToID,
 			&message.CreatedAt, &message.UpdatedAt)
 		if err != nil {
 			return nil, err
@@ -479,7 +393,7 @@ func (s *VoiceService) GetByUser(userID uuid.UUID) (*models.VoiceState, error) {
 	err := database.DB.QueryRow(`
 		SELECT user_id, channel_id, guild_id, joined_at, deaf, muted, self_deaf, self_muted
 		FROM voice_states WHERE user_id = $1
-	`, userID).Scan(&state.UserID, &state.ChannelID, &state.GuildID, 
+	`, userID).Scan(&state.UserID, &state.ChannelID, &state.GuildID,
 		&state.JoinedAt, &state.Deaf, &state.Muted, &state.SelfDeaf, &state.SelfMute)
 
 	if err == sql.ErrNoRows {

@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"log"
 
+	"discord-backend/config"
+
 	_ "github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
-	"discord-backend/config"
 )
 
 var DB *sql.DB
@@ -99,8 +100,23 @@ func CreateTables() error {
 	CREATE INDEX IF NOT EXISTS idx_messages_author_id ON messages(author_id);
 	CREATE INDEX IF NOT EXISTS idx_guild_members_user_id ON guild_members(user_id);
 	CREATE INDEX IF NOT EXISTS idx_channels_guild_id ON channels(guild_id);
+
+	CREATE TABLE IF NOT EXISTS user_tokens (
+		id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+		user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		device_id VARCHAR(255) NOT NULL,
+		device_name VARCHAR(255),
+		ip_address VARCHAR(45),
+		token_hash VARCHAR(255) NOT NULL,
+		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+		expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+		UNIQUE(user_id, device_id)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_user_tokens_user_id ON user_tokens(user_id);
+	CREATE INDEX IF NOT EXISTS idx_user_tokens_device_id ON user_tokens(device_id);
 	`
-	
+
 	_, err := DB.Exec(schema)
 	if err != nil {
 		return fmt.Errorf("failed to create tables: %w", err)
@@ -241,21 +257,21 @@ func seedDefaultData() error {
 
 	log.Println("Seeding guild channels...")
 	guildChannels := []struct {
-		id      string
-		name    string
-		typ     string
-		guildID string
+		id       string
+		name     string
+		typ      string
+		guildID  string
 		position int
 	}{
 		{"aaaaaaaa-aaaa-aaaa-aaaa-111111111111", "欢迎", "text", "11111111-1111-1111-1111-111111111111", 0},
 		{"aaaaaaaa-aaaa-aaaa-aaaa-111111111112", "综合", "text", "11111111-1111-1111-1111-111111111111", 1},
 		{"aaaaaaaa-aaaa-aaaa-aaaa-111111111113", "语音1", "voice", "11111111-1111-1111-1111-111111111111", 2},
 		{"aaaaaaaa-aaaa-aaaa-aaaa-111111111114", "语音2", "voice", "11111111-1111-1111-1111-111111111111", 3},
-		
+
 		{"bbbbbbbb-bbbb-bbbb-bbbb-222222222221", "公告", "text", "22222222-2222-2222-2222-222222222222", 0},
 		{"bbbbbbbb-bbbb-bbbb-bbbb-222222222222", "聊天", "text", "22222222-2222-2222-2222-222222222222", 1},
 		{"bbbbbbbb-bbbb-bbbb-bbbb-222222222223", "语音", "voice", "22222222-2222-2222-2222-222222222222", 2},
-		
+
 		{"cccccccc-cccc-cccc-cccc-333333333331", "规则", "text", "33333333-3333-3333-3333-333333333333", 0},
 		{"cccccccc-cccc-cccc-cccc-333333333332", "聊天", "text", "33333333-3333-3333-3333-333333333333", 1},
 		{"cccccccc-cccc-cccc-cccc-333333333333", "语音", "voice", "33333333-3333-3333-3333-333333333333", 2},
