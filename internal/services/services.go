@@ -3,6 +3,9 @@ package services
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
 
 	"discord-backend/internal/database"
 	"discord-backend/internal/models"
@@ -270,15 +273,35 @@ func NewMessageService() *MessageService {
 }
 
 func (s *MessageService) Create(channelID, authorID uuid.UUID, content string, replyToID *uuid.UUID) (*models.Message, error) {
+	return s.CreateWithType(channelID, authorID, content, "text", nil, replyToID)
+}
+
+func (s *MessageService) CreateWithType(channelID, authorID uuid.UUID, content string, messageType string, voiceURL *string, replyToID *uuid.UUID) (*models.Message, error) {
+	return s.CreateWithAttachments(channelID, authorID, content, messageType, voiceURL, replyToID, nil)
+}
+
+func (s *MessageService) CreateWithAttachments(channelID, authorID uuid.UUID, content string, messageType string, voiceURL *string, replyToID *uuid.UUID, attachments []models.Attachment) (*models.Message, error) {
 	var message models.Message
-	var embedsJSON []byte
+	var embedsJSON, attachmentsJSON []byte
+	
+	// 序列化 attachments
+	if attachments != nil && len(attachments) > 0 {
+		var err error
+		attachmentsJSON, err = json.Marshal(attachments)
+		if err != nil {
+			attachmentsJSON = []byte("[]")
+		}
+	} else {
+		attachmentsJSON = []byte("[]")
+	}
+	
 	err := database.DB.QueryRow(`
-		INSERT INTO messages (channel_id, author_id, content, reply_to_id)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, channel_id, author_id, content, embeds, reply_to_id, created_at, updated_at
-	`, channelID, authorID, content, replyToID).Scan(
+		INSERT INTO messages (channel_id, author_id, content, type, voice_url, reply_to_id, attachments)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id, channel_id, author_id, content, type, voice_url, duration, attachments, embeds, reply_to_id, created_at, updated_at
+	`, channelID, authorID, content, messageType, voiceURL, replyToID, attachmentsJSON).Scan(
 		&message.ID, &message.ChannelID, &message.AuthorID, &message.Content,
-		&embedsJSON, &message.ReplyToID, &message.CreatedAt, &message.UpdatedAt)
+		&message.Type, &message.VoiceURL, &message.Duration, &attachmentsJSON, &embedsJSON, &message.ReplyToID, &message.CreatedAt, &message.UpdatedAt)
 
 	if err != nil {
 		return nil, err
@@ -286,6 +309,10 @@ func (s *MessageService) Create(channelID, authorID uuid.UUID, content string, r
 
 	if err := json.Unmarshal(embedsJSON, &message.Embeds); err != nil {
 		message.Embeds = []models.Embed{}
+	}
+	
+	if err := json.Unmarshal(attachmentsJSON, &message.Attachments); err != nil {
+		message.Attachments = []models.Attachment{}
 	}
 
 	author, _ := NewUserService().GetByID(authorID)
@@ -299,14 +326,23 @@ func (s *MessageService) Create(channelID, authorID uuid.UUID, content string, r
 
 func (s *MessageService) GetByID(id uuid.UUID) (*models.Message, error) {
 	var message models.Message
+	var embedsJSON, attachmentsJSON []byte
 	err := database.DB.QueryRow(`
-		SELECT id, channel_id, author_id, content, embeds, reply_to_id, created_at, updated_at
+		SELECT id, channel_id, author_id, content, type, voice_url, duration, attachments, embeds, reply_to_id, created_at, updated_at
 		FROM messages WHERE id = $1
 	`, id).Scan(&message.ID, &message.ChannelID, &message.AuthorID, &message.Content,
-		&message.Embeds, &message.ReplyToID, &message.CreatedAt, &message.UpdatedAt)
+		&message.Type, &message.VoiceURL, &message.Duration, &attachmentsJSON, &embedsJSON, &message.ReplyToID, &message.CreatedAt, &message.UpdatedAt)
 
 	if err != nil {
 		return nil, err
+	}
+
+	if err := json.Unmarshal(embedsJSON, &message.Embeds); err != nil {
+		message.Embeds = []models.Embed{}
+	}
+	
+	if err := json.Unmarshal(attachmentsJSON, &message.Attachments); err != nil {
+		message.Attachments = []models.Attachment{}
 	}
 
 	author, _ := NewUserService().GetByID(message.AuthorID)
@@ -320,9 +356,12 @@ func (s *MessageService) GetByID(id uuid.UUID) (*models.Message, error) {
 
 func (s *MessageService) GetByChannelID(channelID uuid.UUID, limit, offset int) ([]*models.Message, error) {
 	rows, err := database.DB.Query(`
-		SELECT id, channel_id, author_id, content, embeds, reply_to_id, created_at, updated_at
-		FROM messages WHERE channel_id = $1
-		ORDER BY created_at DESC LIMIT $2 OFFSET $3
+		SELECT m.id, m.channel_id, m.author_id, m.content, m.type, m.voice_url, m.duration, m.attachments, m.embeds, m.reply_to_id, m.created_at, m.updated_at,
+		       u.id, u.username, u.email, u.avatar, u.discriminator
+		FROM messages m
+		LEFT JOIN users u ON m.author_id = u.id
+		WHERE m.channel_id = $1
+		ORDER BY m.created_at DESC LIMIT $2 OFFSET $3
 	`, channelID, limit, offset)
 	if err != nil {
 		return nil, err
@@ -332,14 +371,30 @@ func (s *MessageService) GetByChannelID(channelID uuid.UUID, limit, offset int) 
 	var messages []*models.Message
 	for rows.Next() {
 		var message models.Message
+		var embedsJSON, attachmentsJSON []byte
+		var author models.User
+		var authorID *uuid.UUID
 		err := rows.Scan(&message.ID, &message.ChannelID, &message.AuthorID,
-			&message.Content, &message.Embeds, &message.ReplyToID,
-			&message.CreatedAt, &message.UpdatedAt)
+			&message.Content, &message.Type, &message.VoiceURL, &message.Duration,
+			&attachmentsJSON, &embedsJSON, &message.ReplyToID,
+			&message.CreatedAt, &message.UpdatedAt,
+			&authorID, &author.Username, &author.Email, &author.Avatar, &author.Discriminator)
 		if err != nil {
-			return nil, err
+			continue
 		}
-		author, _ := NewUserService().GetByID(message.AuthorID)
-		message.Author = author
+
+		if err := json.Unmarshal(embedsJSON, &message.Embeds); err != nil {
+			message.Embeds = []models.Embed{}
+		}
+		
+		if err := json.Unmarshal(attachmentsJSON, &message.Attachments); err != nil {
+			message.Attachments = []models.Attachment{}
+		}
+
+		if authorID != nil {
+			author.ID = *authorID
+			message.Author = &author
+		}
 		messages = append(messages, &message)
 	}
 
@@ -349,6 +404,86 @@ func (s *MessageService) GetByChannelID(channelID uuid.UUID, limit, offset int) 
 func (s *MessageService) Delete(id uuid.UUID) error {
 	_, err := database.DB.Exec(`DELETE FROM messages WHERE id = $1`, id)
 	return err
+}
+
+func (s *MessageService) GetCountByChannelID(channelID uuid.UUID) (int, error) {
+	var count int
+	err := database.DB.QueryRow(`
+		SELECT COUNT(*) FROM messages WHERE channel_id = $1
+	`, channelID).Scan(&count)
+	return count, err
+}
+
+func (s *MessageService) CreateCallRecord(channelID, authorID uuid.UUID, content string, voiceCallID uuid.UUID) (*models.Message, error) {
+	var message models.Message
+	var embedsJSON, attachmentsJSON []byte
+	err := database.DB.QueryRow(`
+		INSERT INTO messages (channel_id, author_id, content, type, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		RETURNING id, channel_id, author_id, content, type, attachments, embeds, reply_to_id, created_at, updated_at
+	`, channelID, authorID, content, models.MessageTypeCallRecord).Scan(
+		&message.ID, &message.ChannelID, &message.AuthorID, &message.Content,
+		&message.Type, &attachmentsJSON, &embedsJSON, &message.ReplyToID, &message.CreatedAt, &message.UpdatedAt)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if err := json.Unmarshal(embedsJSON, &message.Embeds); err != nil {
+		message.Embeds = []models.Embed{}
+	}
+	
+	if err := json.Unmarshal(attachmentsJSON, &message.Attachments); err != nil {
+		message.Attachments = []models.Attachment{}
+	}
+
+	message.Type = models.MessageTypeCallRecord
+	author, _ := NewUserService().GetByID(authorID)
+	message.Author = author
+
+	channel, _ := NewChannelService().GetByID(channelID)
+	message.Channel = channel
+
+	return &message, nil
+}
+
+func (s *MessageService) CreateVoiceMessage(channelID, authorID uuid.UUID, voiceURL, duration string) (*models.Message, error) {
+	var message models.Message
+	var embedsJSON, attachmentsJSON []byte
+
+	durationInt := 0
+	if duration != "" {
+		fmt.Sscanf(duration, "%d", &durationInt)
+	}
+
+	err := database.DB.QueryRow(`
+		INSERT INTO messages (channel_id, author_id, content, type, voice_url, duration, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		RETURNING id, channel_id, author_id, content, type, voice_url, duration, attachments, embeds, reply_to_id, created_at, updated_at
+	`, channelID, authorID, "", models.MessageTypeVoice, voiceURL, durationInt).Scan(
+		&message.ID, &message.ChannelID, &message.AuthorID, &message.Content,
+		&message.Type, &message.VoiceURL, &message.Duration, &attachmentsJSON, &embedsJSON, &message.ReplyToID, &message.CreatedAt, &message.UpdatedAt)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if err := json.Unmarshal(embedsJSON, &message.Embeds); err != nil {
+		message.Embeds = []models.Embed{}
+	}
+	
+	if err := json.Unmarshal(attachmentsJSON, &message.Attachments); err != nil {
+		message.Attachments = []models.Attachment{}
+	}
+
+	message.Type = models.MessageTypeVoice
+	author, _ := NewUserService().GetByID(authorID)
+	message.Author = author
+
+	channel, _ := NewChannelService().GetByID(channelID)
+	message.Channel = channel
+
+	return &message, nil
 }
 
 type VoiceService struct{}
@@ -442,4 +577,67 @@ func (s *VoiceService) UpdateDeaf(userID uuid.UUID, deaf bool) error {
 		UPDATE voice_states SET self_deaf = $1 WHERE user_id = $2
 	`, deaf, userID)
 	return err
+}
+
+func (s *VoiceService) EndCall(channelID, initiatorID uuid.UUID, participants []uuid.UUID, hasVideo bool) (*models.VoiceCall, error) {
+	voiceCall := &models.VoiceCall{
+		ID:           uuid.New(),
+		ChannelID:    channelID,
+		InitiatorID:  initiatorID,
+		Participants: participants,
+		StartedAt:    time.Now().Add(-time.Minute * 5), // 示例：假设通话5分钟
+		HasVideo:     hasVideo,
+	}
+
+	now := time.Now()
+	voiceCall.EndedAt = &now
+	voiceCall.Duration = 300 // 5分钟
+
+	err := database.DB.QueryRow(`
+		INSERT INTO voice_calls (id, channel_id, initiator_id, participants, started_at, ended_at, duration, has_video, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id, channel_id, initiator_id, started_at, ended_at, duration, has_video, created_at
+	`, voiceCall.ID, voiceCall.ChannelID, voiceCall.InitiatorID,
+		voiceCall.Participants, voiceCall.StartedAt, voiceCall.EndedAt,
+		voiceCall.Duration, voiceCall.HasVideo, time.Now()).Scan(
+		&voiceCall.ID, &voiceCall.ChannelID, &voiceCall.InitiatorID,
+		&voiceCall.StartedAt, &voiceCall.EndedAt, &voiceCall.Duration,
+		&voiceCall.HasVideo, &voiceCall.CreatedAt)
+
+	if err != nil {
+		return nil, err
+	}
+
+	// 创建通话记录消息
+	messageService := NewMessageService()
+	callDurationStr := fmt.Sprintf("%d:%02d", voiceCall.Duration/60, voiceCall.Duration%60)
+	callType := "语音通话"
+	if hasVideo {
+		callType = "视频通话"
+	}
+
+	// 获取参与者用户名
+	participantNames := []string{}
+	for _, pID := range participants {
+		if pID != initiatorID {
+			user, _ := NewUserService().GetByID(pID)
+			if user != nil {
+				participantNames = append(participantNames, user.Username)
+			}
+		}
+	}
+
+	participantsStr := strings.Join(participantNames, ", ")
+	if participantsStr == "" {
+		participantsStr = "无其他参与者"
+	}
+
+	content := fmt.Sprintf("%s - %s (%s)", callType, participantsStr, callDurationStr)
+
+	msg, err := messageService.CreateCallRecord(channelID, initiatorID, content, voiceCall.ID)
+	if err == nil {
+		voiceCall.MessageID = &msg.ID
+	}
+
+	return voiceCall, nil
 }

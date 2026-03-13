@@ -13,6 +13,9 @@ func Setup(cfg *config.Config, hub *websocket.Hub) *gin.Engine {
 	r := gin.Default()
 	r.SetTrustedProxies([]string{"127.0.0.1", "::1", "localhost"})
 
+	// 提供静态文件服务
+	r.Static("/uploads", "./uploads")
+
 	r.Use(func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
@@ -31,6 +34,8 @@ func Setup(cfg *config.Config, hub *websocket.Hub) *gin.Engine {
 	channelHandler := handlers.NewChannelHandler()
 	messageHandler := handlers.NewMessageHandler()
 	voiceHandler := handlers.NewVoiceHandler()
+	fileHandler := handlers.NewFileHandler(hub)
+	giftHandler := handlers.NewGiftHandler(hub)
 
 	api := r.Group("/api")
 	{
@@ -70,6 +75,24 @@ func Setup(cfg *config.Config, hub *websocket.Hub) *gin.Engine {
 			voice.POST("/join", voiceHandler.Join)
 			voice.POST("/leave", voiceHandler.Leave)
 			voice.GET("/:channelId", voiceHandler.GetChannelState)
+			voice.POST("/end-call", voiceHandler.EndCall)
+			voice.POST("/message", voiceHandler.UploadVoiceMessage)
+		}
+
+		files := api.Group("/files")
+		files.Use(middleware.AuthMiddleware(cfg))
+		{
+			files.POST("/upload", fileHandler.UploadFile)
+			files.POST("/image", fileHandler.UploadImage)
+			files.POST("/gif", fileHandler.SendGif)
+			files.POST("/sticker", fileHandler.SendSticker)
+			files.GET("/download/:type/:filename", fileHandler.DownloadFile)
+		}
+
+		gifts := api.Group("/gifts")
+		gifts.Use(middleware.AuthMiddleware(cfg))
+		{
+			gifts.POST("/send", giftHandler.SendGift)
 		}
 	}
 

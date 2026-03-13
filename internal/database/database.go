@@ -78,6 +78,10 @@ func CreateTables() error {
 		channel_id UUID NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
 		author_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		content TEXT NOT NULL,
+		type VARCHAR(20) NOT NULL DEFAULT 'text',
+		voice_url VARCHAR(255),
+		duration INTEGER,
+		attachments JSONB DEFAULT '[]',
 		embeds JSONB DEFAULT '[]',
 		reply_to_id UUID REFERENCES messages(id) ON DELETE SET NULL,
 		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -96,10 +100,25 @@ func CreateTables() error {
 		PRIMARY KEY (user_id)
 	);
 
+	CREATE TABLE IF NOT EXISTS voice_calls (
+		id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+		channel_id UUID NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+		initiator_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		participants UUID[] NOT NULL,
+		started_at TIMESTAMP WITH TIME ZONE NOT NULL,
+		ended_at TIMESTAMP WITH TIME ZONE,
+		duration INTEGER NOT NULL DEFAULT 0,
+		has_video BOOLEAN DEFAULT FALSE,
+		message_id UUID REFERENCES messages(id) ON DELETE SET NULL,
+		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id);
 	CREATE INDEX IF NOT EXISTS idx_messages_author_id ON messages(author_id);
 	CREATE INDEX IF NOT EXISTS idx_guild_members_user_id ON guild_members(user_id);
 	CREATE INDEX IF NOT EXISTS idx_channels_guild_id ON channels(guild_id);
+	CREATE INDEX IF NOT EXISTS idx_voice_calls_channel_id ON voice_calls(channel_id);
+	CREATE INDEX IF NOT EXISTS idx_voice_calls_initiator_id ON voice_calls(initiator_id);
 
 	CREATE TABLE IF NOT EXISTS user_tokens (
 		id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

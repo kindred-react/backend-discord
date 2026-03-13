@@ -1,88 +1,49 @@
 #!/bin/bash
 
-set -e
+# Discord 后端快速启动脚本（极速版）
+# 此脚本会预先下载依赖，确保最快启动速度
 
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$PROJECT_DIR"
+cd "$(dirname "$0")"
 
-echo "=========================================="
-echo "Starting Backend Discord Server"
-echo "=========================================="
+# 颜色输出
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
 
-SERVER_PORT=$(grep "^SERVER_PORT=" .env 2>/dev/null | cut -d'=' -f2 || echo "8080")
-echo "Server Port: $SERVER_PORT"
-
+echo -e "${BLUE}⚡ Discord 后端极速启动${NC}"
 echo ""
-echo "[1/4] Killing existing processes on port $SERVER_PORT..."
 
-PID=$(lsof -ti :$SERVER_PORT 2>/dev/null || true)
-if [ -n "$PID" ]; then
-    echo "Found process $PID running on port $SERVER_PORT"
-    kill -9 $PID 2>/dev/null || true
-    echo "Killed process $PID"
-    sleep 1
+# 步骤 1: 确保依赖已下载
+if [ ! -d "$HOME/go/pkg/mod/github.com/gin-gonic" ]; then
+    echo -e "${YELLOW}📥 首次运行，下载依赖...${NC}"
+    go mod download
+    echo -e "${GREEN}✅ 依赖下载完成${NC}"
+fi
+
+# 步骤 2: 检查是否需要编译
+if [ ! -f bin/server ]; then
+    echo -e "${YELLOW}🔨 首次编译...${NC}"
+    mkdir -p bin
+    
+    # 使用最快的编译选项
+    go build -ldflags="-s -w" -trimpath -o bin/server cmd/server/main.go
+    
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}❌ 编译失败${NC}"
+        exit 1
+    fi
+    
+    echo -e "${GREEN}✅ 编译完成${NC}"
 else
-    echo "No process found on port $SERVER_PORT"
+    echo -e "${GREEN}✅ 使用缓存的二进制文件${NC}"
 fi
 
 echo ""
-echo "[2/4] Clearing cache..."
-
-if [ -d "bin" ]; then
-    echo "Removing bin/ directory..."
-    rm -rf bin/
-fi
-
-if [ -f "server.bin" ]; then
-    echo "Removing server.bin..."
-    rm -f server.bin
-fi
-
-if [ -f "server_clean" ]; then
-    echo "Removing server_clean..."
-    rm -f server_clean
-fi
-
-if [ -f "server_final" ]; then
-    echo "Removing server_final..."
-    rm -f server_final
-fi
-
-if [ -f "server_new" ]; then
-    echo "Removing server_new..."
-    rm -f server_new
-fi
-
-if [ -f "server.log" ]; then
-    echo "Removing server.log..."
-    rm -f server.log
-fi
-
-echo "Running go clean..."
-go clean -cache -modcache -testcache 2>/dev/null || true
-
+echo -e "${GREEN}🚀 启动服务器（端口 8080）${NC}"
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
-echo "[3/4] Building server..."
 
-if ! command -v go &> /dev/null; then
-    echo "Error: Go is not installed or not in PATH"
-    exit 1
-fi
-
-go build -o bin/server ./cmd/server/main.go
-
-if [ $? -ne 0 ]; then
-    echo "Error: Build failed"
-    exit 1
-fi
-
-echo "Build successful: bin/server"
-
-echo ""
-echo "[4/4] Starting server..."
-
-if [ -f .env ]; then
-    export $(cat .env | grep -v '^#' | xargs)
-fi
-
-./bin/server
+# 运行服务器
+exec ./bin/server

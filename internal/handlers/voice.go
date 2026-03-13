@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
+	"time"
 
 	"discord-backend/internal/middleware"
 	"discord-backend/internal/services"
@@ -66,4 +68,64 @@ func (h *VoiceHandler) GetChannelState(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, states)
+}
+
+func (h *VoiceHandler) EndCall(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+
+	var req struct {
+		ChannelID    uuid.UUID   `json:"channel_id" binding:"required"`
+		Participants []uuid.UUID `json:"participants" binding:"required"`
+		HasVideo     bool        `json:"has_video"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	voiceService := services.NewVoiceService()
+	voiceCall, err := voiceService.EndCall(req.ChannelID, userID, req.Participants, req.HasVideo)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to end voice call"})
+		return
+	}
+
+	c.JSON(http.StatusOK, voiceCall)
+}
+
+func (h *VoiceHandler) UploadVoiceMessage(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	channelID, err := uuid.Parse(c.PostForm("channel_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid channel ID"})
+		return
+	}
+
+	file, err := c.FormFile("voice")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No voice file provided"})
+		return
+	}
+
+	// 保存文件到本地或云存储
+	filename := fmt.Sprintf("voice_%s_%d.webm", userID.String(), time.Now().Unix())
+	filepath := fmt.Sprintf("./uploads/voice/%s", filename)
+
+	if err := c.SaveUploadedFile(file, filepath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save voice file"})
+		return
+	}
+
+	voiceURL := fmt.Sprintf("/uploads/voice/%s", filename)
+	duration := c.PostForm("duration")
+
+	messageService := services.NewMessageService()
+	msg, err := messageService.CreateVoiceMessage(channelID, userID, voiceURL, duration)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create voice message"})
+		return
+	}
+
+	c.JSON(http.StatusOK, msg)
 }

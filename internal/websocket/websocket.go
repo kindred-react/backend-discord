@@ -102,6 +102,11 @@ func (h *Hub) Run() {
 	}
 }
 
+// Broadcast 公共方法，用于从其他地方发送广播消息
+func (h *Hub) Broadcast(message *BroadcastMessage) {
+	h.broadcast <- message
+}
+
 func (h *Hub) removeClient(client *Client) {
 	h.mutex.Lock()
 	defer h.mutex.Unlock()
@@ -132,9 +137,6 @@ func (h *Hub) handleBroadcast(message *BroadcastMessage) {
 		if message.ChannelID != nil {
 			channelRoom = "channel:" + message.ChannelID.String()
 		}
-		if message.GuildID != nil {
-			guildRoom = "guild:" + message.GuildID.String()
-		}
 	case "channel:voice:join", "channel:voice:leave":
 		if message.GuildID != nil {
 			guildRoom = "guild:" + message.GuildID.String()
@@ -142,8 +144,10 @@ func (h *Hub) handleBroadcast(message *BroadcastMessage) {
 	}
 
 	data, _ := json.Marshal(map[string]interface{}{
-		"event": message.Event,
-		"data":  message.Data,
+		"event":       message.Event,
+		"data":        message.Data,
+		"channel_id":  message.ChannelID,
+		"guild_id":    message.GuildID,
 	})
 
 	if channelRoom != "" {
@@ -284,6 +288,7 @@ func (c *Client) handleMessage(msg Message) {
 			return
 		}
 
+		// 广播消息到所有在该频道的客户端
 		c.hub.broadcast <- &BroadcastMessage{
 			Event:     "message:new",
 			ChannelID: &channelID,
@@ -371,6 +376,32 @@ func (c *Client) handleMessage(msg Message) {
 
 		log.Printf("User %s joined room %s, room now has clients: %d", c.UserID, room, c.hub.GetRoomClients(room))
 
+		channelID, err := uuid.Parse(payload.ChannelID)
+		if err != nil {
+			log.Printf("Failed to parse channel ID: %v", err)
+			return
+		}
+
+		messageService := services.NewMessageService()
+		messages, err := messageService.GetByChannelID(channelID, 50, 0)
+		if err != nil {
+			log.Printf("Failed to get channel messages: %v", err)
+			return
+		}
+
+		historyData, _ := json.Marshal(map[string]interface{}{
+			"event":   "message:history",
+			"data":    messages,
+			"channel_id": payload.ChannelID,
+		})
+
+		select {
+		case c.Send <- historyData:
+			log.Printf("Sent %d historical messages to user %s for channel %s", len(messages), c.UserID, payload.ChannelID)
+		default:
+			log.Printf("Failed to send historical messages to user %s", c.UserID)
+		}
+
 	case "leave_channel":
 		var payload struct {
 			ChannelID string `json:"channel_id"`
@@ -457,15 +488,45 @@ func HandleWebSocket(hub *Hub) gin.HandlerFunc {
 
 		hub.register <- client
 
+		channelService := services.NewChannelService()
 		guildService := services.NewGuildService()
+		messageService := services.NewMessageService()
 		userGuilds, err := guildService.GetByUserID(userID)
 		if err != nil {
 			log.Printf("Failed to get user guilds: %v", err)
 		} else {
 			for _, guild := range userGuilds {
-				room := "guild:" + guild.ID.String()
-				hub.JoinRoom(client, room)
-				log.Printf("User %s auto-joined guild room: %s", userID, room)
+				channels, err := channelService.GetByGuildID(guild.ID)
+				if err != nil {
+					log.Printf("Failed to get channels for guild %s: %v", guild.ID, err)
+					continue
+				}
+				for _, channel := range channels {
+					room := "channel:" + channel.ID.String()
+					hub.JoinRoom(client, room)
+					log.Printf("User %s auto-joined channel room: %s (channel: %s)", userID, room, channel.Name)
+
+					if channel.Type == "text" {
+						messages, err := messageService.GetByChannelID(channel.ID, 50, 0)
+						if err != nil {
+							log.Printf("Failed to get historical messages for channel %s: %v", channel.ID, err)
+							continue
+						}
+
+						historyData, _ := json.Marshal(map[string]interface{}{
+							"event":      "message:history",
+							"data":       messages,
+							"channel_id": channel.ID.String(),
+						})
+
+						select {
+						case client.Send <- historyData:
+							log.Printf("Sent %d historical messages to user %s for channel %s", len(messages), userID, channel.Name)
+						default:
+							log.Printf("Failed to send historical messages to user %s for channel %s", userID, channel.Name)
+						}
+					}
+				}
 			}
 		}
 

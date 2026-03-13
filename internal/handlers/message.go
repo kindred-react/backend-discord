@@ -73,7 +73,18 @@ func (h *MessageHandler) Get(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, messages)
+	// 获取消息总数
+	totalCount, err := messageService.GetCountByChannelID(channelID)
+	if err != nil {
+		totalCount = 0
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"messages": messages,
+		"total":    totalCount,
+		"limit":    limit,
+		"offset":   offset,
+	})
 }
 
 func (h *MessageHandler) Delete(c *gin.Context) {

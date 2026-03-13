@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"os"
 
 	"discord-backend/config"
 	"discord-backend/internal/database"
@@ -19,6 +20,11 @@ func main() {
 
 	if err := database.CreateTables(); err != nil {
 		log.Fatalf("Failed to create tables: %v", err)
+	}
+
+	// 创建上传目录
+	if err := os.MkdirAll("./uploads/voice", 0755); err != nil {
+		log.Fatalf("Failed to create uploads directory: %v", err)
 	}
 
 	hub := websocket.NewHub()
