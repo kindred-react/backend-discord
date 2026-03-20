@@ -486,6 +486,111 @@ func (s *MessageService) CreateVoiceMessage(channelID, authorID uuid.UUID, voice
 	return &message, nil
 }
 
+type InviteService struct{}
+
+func NewInviteService() *InviteService {
+	return &InviteService{}
+}
+
+func (s *InviteService) Generate(guildID, creatorID uuid.UUID, maxUses int, expireHours int) (string, error) {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	code := make([]byte, 8)
+	for i := range code {
+		code[i] = charset[uuid.New().ID()%uint32(len(charset))]
+	}
+	inviteCode := string(code)
+
+	var expiresAt interface{}
+	if expireHours > 0 {
+		expiresAt = time.Now().Add(time.Duration(expireHours) * time.Hour)
+	}
+
+	_, err := database.DB.Exec(`
+		INSERT INTO guild_invites (guild_id, creator_id, code, max_uses, expiresAt)
+		VALUES ($1, $2, $3, $4, $5)
+	`, guildID, creatorID, inviteCode, maxUses, expiresAt)
+	if err != nil {
+		return "", err
+	}
+	return inviteCode, nil
+}
+
+func (s *InviteService) validate(code string) (uuid.UUID, error) {
+	var guildID uuid.UUID
+	var uses, maxUses int
+	var expiresAt *time.Time
+
+	err := database.DB.QueryRow(`
+		SELECT guild_id, uses, max_uses, expiresAt FROM guild_invites
+		WHERE code = $1
+	`, code).Scan(&guildID, &uses, &maxUses, &expiresAt)
+	if err == sql.ErrNoRows {
+		return uuid.Nil, fmt.Errorf("invalid invite code")
+	}
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if expiresAt != nil && time.Now().After(*expiresAt) {
+		return uuid.Nil, fmt.Errorf("invite code expired")
+	}
+	if maxUses > 0 && uses >= maxUses {
+		return uuid.Nil, fmt.Errorf("invite code has reached max uses")
+	}
+	return guildID, nil
+}
+
+func (s *InviteService) GetGuildByCode(code string) (*models.Guild, int, error) {
+	guildID, err := s.validate(code)
+	if err != nil {
+		return nil, 0, err
+	}
+	guild, err := NewGuildService().GetByID(guildID)
+	if err != nil {
+		return nil, 0, err
+	}
+	var memberCount int
+	_ = database.DB.QueryRow(`SELECT COUNT(*) FROM guild_members WHERE guild_id = $1`, guildID).Scan(&memberCount)
+	return guild, memberCount, nil
+}
+
+func (s *InviteService) Use(code string, userID uuid.UUID) (*models.Guild, int, error) {
+	guild, memberCount, err := s.GetGuildByCode(code)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	var exists bool
+	_ = database.DB.QueryRow(`
+		SELECT EXISTS(SELECT 1 FROM guild_members WHERE guild_id = $1 AND user_id = $2)
+	`, guild.ID, userID).Scan(&exists)
+	if exists {
+		return guild, memberCount, nil
+	}
+
+	tx, err := database.DB.Begin()
+	if err != nil {
+		return nil, 0, err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
+		INSERT INTO guild_members (guild_id, user_id, role)
+		VALUES ($1, $2, 'member')
+		ON CONFLICT DO NOTHING
+	`, guild.ID, userID)
+	if err != nil {
+		return nil, 0, err
+	}
+	_, err = tx.Exec(`UPDATE guild_invites SET uses = uses + 1 WHERE code = $1`, code)
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, 0, err
+	}
+	return guild, memberCount + 1, nil
+}
+
 type VoiceService struct{}
 
 func NewVoiceService() *VoiceService {

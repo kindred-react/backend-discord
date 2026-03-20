@@ -36,6 +36,7 @@ func Setup(cfg *config.Config, hub *websocket.Hub) *gin.Engine {
 	voiceHandler := handlers.NewVoiceHandler()
 	fileHandler := handlers.NewFileHandler(hub)
 	giftHandler := handlers.NewGiftHandler(hub)
+	inviteHandler := handlers.NewInviteHandler()
 
 	api := r.Group("/api")
 	{
@@ -57,6 +58,14 @@ func Setup(cfg *config.Config, hub *websocket.Hub) *gin.Engine {
 			guilds.GET("/:id/members", guildHandler.GetMembers)
 			guilds.POST("/:id/channels", channelHandler.CreateByGuild)
 			guilds.GET("/:id/channels", channelHandler.GetByGuild)
+			guilds.POST("/:id/invites", inviteHandler.Create)
+		}
+
+		// 邀请码路由（预览无需登录，加入需要登录）
+		invites := api.Group("/invites")
+		{
+			invites.GET("/:code", inviteHandler.Preview)
+			invites.POST("/:code", middleware.AuthMiddleware(cfg), inviteHandler.Join)
 		}
 
 		channels := api.Group("/channels")

@@ -134,6 +134,20 @@ func CreateTables() error {
 
 	CREATE INDEX IF NOT EXISTS idx_user_tokens_user_id ON user_tokens(user_id);
 	CREATE INDEX IF NOT EXISTS idx_user_tokens_device_id ON user_tokens(device_id);
+
+	CREATE TABLE IF NOT EXISTS guild_invites (
+		id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+		guild_id UUID NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,
+		creator_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		code VARCHAR(16) NOT NULL UNIQUE,
+		max_uses INTEGER NOT NULL DEFAULT 0,
+		uses INTEGER NOT NULL DEFAULT 0,
+		expiresAt TIMESTAMP WITH TIME ZONE,
+		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_guild_invites_code ON guild_invites(code);
+	CREATE INDEX IF NOT EXISTS idx_guild_invites_guild_id ON guild_invites(guild_id);
 	`
 
 	_, err := DB.Exec(schema)
