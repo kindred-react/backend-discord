@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 
+	"discord-backend/internal/middleware"
 	"discord-backend/internal/models"
 	"discord-backend/internal/services"
 
@@ -35,7 +36,7 @@ func (h *ChannelHandler) CreateByGuild(c *gin.Context) {
 	}
 
 	var req struct {
-		Name     string              `json:"name" binding:"required,min=2,max=100"`
+		Name     string              `json:"name" binding:"required,min=1,max=100"`
 		Type     models.ChannelType `json:"type" binding:"required"`
 		ParentID *uuid.UUID          `json:"parent_id"`
 	}
@@ -90,6 +91,7 @@ func (h *ChannelHandler) GetByGuild(c *gin.Context) {
 }
 
 func (h *ChannelHandler) Delete(c *gin.Context) {
+	userID := middleware.GetUserID(c)
 	channelID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid channel ID"})
@@ -97,6 +99,30 @@ func (h *ChannelHandler) Delete(c *gin.Context) {
 	}
 
 	channelService := services.NewChannelService()
+	channel, err := channelService.GetByID(channelID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Channel not found"})
+		return
+	}
+
+	// Check if user is owner or admin of the guild
+	guildService := services.NewGuildService()
+	guildID := channel.GuildID
+	if guildID == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Channel has no guild"})
+		return
+	}
+	guild, err := guildService.GetByID(*guildID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Guild not found"})
+		return
+	}
+
+	if guild.OwnerID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only guild owner can delete channels"})
+		return
+	}
+
 	if err := channelService.Delete(channelID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete channel"})
 		return

@@ -96,6 +96,34 @@ func (h *GuildHandler) Delete(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Guild deleted"})
 }
 
+func (h *GuildHandler) Leave(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	guildID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid guild ID"})
+		return
+	}
+
+	guildService := services.NewGuildService()
+	guild, err := guildService.GetByID(guildID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Guild not found"})
+		return
+	}
+
+	if guild.OwnerID == userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Owner cannot leave guild, delete it instead"})
+		return
+	}
+
+	if err := guildService.RemoveMember(guildID, userID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to leave guild"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Left guild successfully"})
+}
+
 func (h *GuildHandler) GetMembers(c *gin.Context) {
 	guildID, err := uuid.Parse(c.Param("id"))
 	if err != nil {

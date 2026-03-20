@@ -56,6 +56,7 @@ func Setup(cfg *config.Config, hub *websocket.Hub) *gin.Engine {
 			guilds.GET("/:id", guildHandler.Get)
 			guilds.DELETE("/:id", guildHandler.Delete)
 			guilds.GET("/:id/members", guildHandler.GetMembers)
+			guilds.DELETE("/:id/leave", guildHandler.Leave)
 			guilds.POST("/:id/channels", channelHandler.CreateByGuild)
 			guilds.GET("/:id/channels", channelHandler.GetByGuild)
 			guilds.POST("/:id/invites", inviteHandler.Create)
